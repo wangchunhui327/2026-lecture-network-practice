@@ -52,44 +52,63 @@ class UnreliableChannel:
         return self.wire.pop(0)
 
 
+
 class Sender:
-    """Your sender.
-
-    Requirements are in task1.md. The short version:
-
-      - break `data` into PAYLOAD-sized pieces and number them
-      - retransmit what is not acknowledged
-      - do not assume an ACK means what you think it means until you have
-        checked the number on it
-
-    You choose the protocol: stop-and-wait is the easiest to get right and the
-    slowest; a sliding window is the point of §3.4.3. Say which you chose and
-    why in observation.md.
-    """
-
     def __init__(self, data_channel, ack_channel, data):
-        raise NotImplementedError("write your sender")
+        self.channel = data_channel
+        self.acks = ack_channel
+        self.pieces = [
+            data[i:i + PAYLOAD]
+            for i in range(0, len(data), PAYLOAD)
+        ]
+        self.seq = 0
+        self.timer = 0
 
     def step(self):
-        """Do one unit of work. Return False when you believe you are done."""
-        raise NotImplementedError
+        ack = self.acks.receive()
+
+        if ack == ("ack", self.seq):
+            self.seq += 1
+            self.timer = 0
+
+        if self.seq >= len(self.pieces):
+            return False
+
+        if self.timer <= 0:
+            packet = ("data", self.seq, self.pieces[self.seq])
+            self.channel.send(packet)
+            self.timer = 5
+        else:
+            self.timer -= 1
+
+        return True
 
 
 class Receiver:
-    """Your receiver. Hands back the reassembled bytes via `.data()`."""
-
     def __init__(self, data_channel, ack_channel):
-        raise NotImplementedError("write your receiver")
+        self.channel = data_channel
+        self.acks = ack_channel
+        self.expected = 0
+        self.received = bytearray()
 
     def step(self):
-        raise NotImplementedError
+        packet = self.channel.receive()
+
+        if packet is None:
+            return
+
+        kind, seq, payload = packet
+
+        if kind == "data":
+            if seq == self.expected:
+                self.received.extend(payload)
+                self.expected += 1
+
+            if seq < self.expected:
+                self.acks.send(("ack", seq))
 
     def data(self):
-        """The bytes reassembled so far."""
-        raise NotImplementedError
-
-
-# ------------------------------------------------------------------- harness
+        return bytes(self.received)
 def verify(seed=246, size=2000, max_steps=200_000):
     original = bytes(random.Random(seed).getrandbits(8) for _ in range(size))
     up, down = UnreliableChannel(seed), UnreliableChannel(seed + 1)
